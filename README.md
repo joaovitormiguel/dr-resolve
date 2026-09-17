@@ -39,7 +39,7 @@ python3 resolve.py clip.mp4 out/ --state sequence --start 1.5 --end 6
 python3 resolve.py photo.jpg out/ --state sequence --seconds 4 --hold 1
 ```
 
-Options: `--width` output width (source by default) · `--cols` numbers per row in the field (72) · `--fill` how much of each cell a dither block fills (0.82) · `--levels` tones in the dither (4) · `--fps` (24) · `--reroll` share of field cells that change each frame (0.05) · `--lime` accent hex (#CDFE7C).
+Options: `--width` output width (source by default) · `--cols` numbers per row in the field (72) · `--fill` how much of each cell a dither block fills (1 = solid, default; lower adds a gap) · `--levels` tones in the dither (4) · `--fps` (24) · `--reroll` share of field cells that change each frame (0.05) · `--lime` accent hex (#CDFE7C).
 
 ## Rules that make it look right
 

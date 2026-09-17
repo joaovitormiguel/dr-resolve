@@ -91,7 +91,7 @@ class Field:
         return out
 
 # ---------- state: dither (one block per number cell) ----------
-def state_dither(frame, field, lime, levels_n=4, gamma=1.2, fill=0.82, lut=None):
+def state_dither(frame, field, lime, levels_n=4, gamma=1.2, fill=1.0, lut=None):
     """Ordered (Bayer 8x8) dither on the field's own grid: each number cell becomes one block."""
     lum = luminance(frame, field.cols, field.rows, blur=0.4) ** gamma
     q = np.clip(np.floor(lum * (levels_n - 1) + field.thr) / (levels_n - 1), 0, 1)
@@ -108,7 +108,7 @@ def reveal_mask(k, field):
     return (field.thr < k).astype(np.float32)[field.row_of_y[:, None], field.col_of_x[None, :]][..., None]
 
 # ---------- sequence: field -> dither -> clear ----------
-def sequence_frame(frame, t, field, W, H, lime, lut, levels_n=4, fill=0.82):
+def sequence_frame(frame, t, field, W, H, lime, lut, levels_n=4, fill=1.0):
     """t in 0..1. 0-0.35 field brightens; 0.35-0.65 each cell's number lights up into its block; 0.65-1 blocks resolve to clear."""
     if t < 0.35:
         return field.render(frame, gain=0.35 + 0.65 * (t / 0.35))
@@ -138,7 +138,7 @@ def main():
     ap.add_argument("--state", default="all", choices=["field", "dither", "clear", "all", "sequence"])
     ap.add_argument("--width", type=int, default=None, help="output width (default: source)")
     ap.add_argument("--cols", type=int, default=72, help="numbers per row in the field state")
-    ap.add_argument("--fill", type=float, default=0.82, help="how much of each cell a dither block fills (0.5 to 1)")
+    ap.add_argument("--fill", type=float, default=1.0, help="how much of each cell a dither block fills (1 = solid, lower adds a gap)")
     ap.add_argument("--levels", type=int, default=4, help="tone levels in the dither state")
     ap.add_argument("--fps", type=int, default=24)
     ap.add_argument("--reroll", type=float, default=0.05, help="share of field cells that change each frame")
