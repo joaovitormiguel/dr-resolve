@@ -15,7 +15,15 @@ The idea: under every drayage lane there is a layer of numbers nobody could read
 
 Python 3.9+, `pip install pillow numpy`, and `ffmpeg` on the PATH for video.
 
-## Use
+## Use (web UI)
+
+```bash
+python3 app.py
+```
+
+Opens http://localhost:8765 in your browser. Drop an image or video, pick a state, adjust the sliders, press Render. Results preview on the page with download links. Everything runs locally; uploads and renders land in `jobs/`.
+
+## Use (command line)
 
 ```bash
 # all three states as stills
