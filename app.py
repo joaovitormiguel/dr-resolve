@@ -41,7 +41,7 @@ button:disabled{opacity:.5;cursor:wait}.drop{border:1px dashed var(--border);bor
 <label>State</label><select name="state" id="state"><option value="all">All three stills (field, dither, clear)</option><option value="sequence">Sequence: field → dither → clear</option><option value="field">Field only</option><option value="dither">Dither only</option><option value="clear">Clear only</option></select>
 <label>Output width <span class="val" id="widthv">source</span></label><input type="number" name="width" id="width" placeholder="source width" min="240" step="2">
 <div class="row"><div><label>Field columns <span class="val" id="colsv">72</span></label><input type="range" name="cols" id="cols" min="24" max="160" value="72"></div>
-<div><label>Dither block px <span class="val" id="blockv">12</span></label><input type="range" name="block" id="block" min="4" max="32" value="12"></div></div>
+<div><label>Block fill <span class="val" id="fillv">0.82</span></label><input type="range" name="fill" id="fill" min="0.5" max="1" step="0.02" value="0.82"></div></div>
 <div class="row"><div><label>Dither levels <span class="val" id="levelsv">4</span></label><input type="range" name="levels" id="levels" min="2" max="8" value="4"></div>
 <div><label>Field reroll <span class="val" id="rerollv">0.05</span></label><input type="range" name="reroll" id="reroll" min="0" max="0.3" step="0.01" value="0.05"></div></div>
 <div id="seqimg"><div class="row"><div><label>Length (s)</label><input type="number" name="seconds" value="4" step="0.5" min="1"></div><div><label>Hold clear (s)</label><input type="number" name="hold" value="1" step="0.5" min="0"></div></div></div>
@@ -58,7 +58,7 @@ function isVideo(){const f=file.files[0];return f&&(f.type.startsWith('video')||
 function showName(){const f=file.files[0];if(!f)return;fname.textContent=f.name;fname.classList.remove('hidden');syncSeq()}
 function syncSeq(){const seq=$('#state').value==='sequence';$('#seqimg').classList.toggle('hidden',!(seq&&!isVideo()));$('#seqvid').classList.toggle('hidden',!(seq&&isVideo()))}
 $('#state').onchange=syncSeq;
-for(const id of['cols','block','levels','reroll']){const el=$('#'+id);el.oninput=()=>$('#'+id+'v').textContent=el.value}
+for(const id of['cols','fill','levels','reroll']){const el=$('#'+id);el.oninput=()=>$('#'+id+'v').textContent=el.value}
 $('#width').oninput=e=>$('#widthv').textContent=e.target.value||'source';
 $('#f').onsubmit=async ev=>{ev.preventDefault();if(!file.files[0]){alert('Choose a file first');return}
 $('#go').disabled=true;$('#status').textContent='Uploading…';$('#out').innerHTML='';
@@ -87,7 +87,7 @@ def run_job(jid, fields, filename, data):
     src = d / "in" / safe; src.write_bytes(data)
     is_video = src.suffix.lower() in {".mp4", ".mov", ".webm", ".m4v"}
     cmd = [sys.executable, str(HERE / "resolve.py"), str(src), str(d / "out"), "--state", fields.get("state", "all")]
-    for k in ("cols", "block", "levels", "fps", "reroll"):
+    for k in ("cols", "fill", "levels", "fps", "reroll"):
         if fields.get(k): cmd += [f"--{k}", fields[k]]
     if fields.get("width"): cmd += ["--width", fields["width"]]
     if fields.get("state") == "sequence":

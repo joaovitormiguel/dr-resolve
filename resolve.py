@@ -3,7 +3,7 @@
 
 States
   field   dim two-digit numbers whose brightness follows the source (data nobody can read)
-  dither  ordered-dither pixel blocks in the lime ramp; a shape emerges (partial legibility)
+  dither  one lime-ramp block per number cell, ordered-dithered; a shape emerges (partial legibility)
   clear   the source itself, graded dark (legibility = transparency)
 
 Modes
@@ -64,7 +64,12 @@ def state_clear(frame, W, H, gamma=1.15, lift=0.0):
 class Field:
     def __init__(self, W, H, cols, lime, gamma=1.6, floor=0.04, seed=7):
         self.W, self.H, self.cols = W, H, cols
-        self.cw = W / cols; self.ch = self.cw * 0.9; self.rows = int(H / self.ch)
+        self.cw = W / cols; self.ch = self.cw * 0.9
+        self.rows = int(np.ceil(H / self.ch))
+        # per-pixel cell index maps so every state shares exactly this grid
+        self.col_of_x = np.minimum((np.arange(W) / self.cw).astype(int), cols - 1)
+        self.row_of_y = np.minimum((np.arange(H) / self.ch).astype(int), self.rows - 1)
+        self.thr = np.tile(BAYER8, (self.rows // 8 + 1, cols // 8 + 1))[:self.rows, :cols]
         self.font = ImageFont.truetype(str(FONT), size=max(6, int(self.ch * 0.62)))
         self.gw = self.font.getlength("00"); self.gamma, self.floor = gamma, floor
         self.lut = ramp_lut(lime); rng = random.Random(seed)
@@ -85,41 +90,36 @@ class Field:
                 d.text((c * self.cw + (self.cw - self.gw) / 2, r * self.ch + self.ch * 0.12), f"{self.nums[r][c]:02d}", font=self.font, fill=col)
         return out
 
-# ---------- state: dither ----------
-def state_dither(frame, W, H, block, lime, levels_n=4, gamma=1.2, lut=None):
-    """Ordered (Bayer 8x8) dither on a block grid, quantized to a few lime-ramp tones."""
-    gw, gh = W // block, H // block
-    lum = luminance(frame, gw, gh, blur=0.4) ** gamma
-    tile = np.tile(BAYER8, (gh // 8 + 1, gw // 8 + 1))[:gh, :gw]
-    q = np.floor(lum * (levels_n - 1) + tile) / (levels_n - 1)   # threshold with Bayer noise
-    q = np.clip(q, 0, 1)
+# ---------- state: dither (one block per number cell) ----------
+def state_dither(frame, field, lime, levels_n=4, gamma=1.2, fill=0.82, lut=None):
+    """Ordered (Bayer 8x8) dither on the field's own grid: each number cell becomes one block."""
+    lum = luminance(frame, field.cols, field.rows, blur=0.4) ** gamma
+    q = np.clip(np.floor(lum * (levels_n - 1) + field.thr) / (levels_n - 1), 0, 1)
     lut = lut if lut is not None else ramp_lut(lime)
-    rgb = lut[(q * 255).astype(np.uint8)]
-    small = Image.fromarray(rgb, "RGB")
-    return small.resize((gw * block, gh * block), Image.NEAREST).resize((W, H), Image.NEAREST)
+    rgb = lut[(q * 255).astype(np.uint8)][field.row_of_y[:, None], field.col_of_x[None, :]]
+    # inset each block so it reads as a box, centred on the glyph
+    fx = (np.arange(field.W) / field.cw) % 1.0; fy = (np.arange(field.H) / field.ch) % 1.0
+    lo, hi = (1 - fill) / 2, 1 - (1 - fill) / 2
+    inside = ((fx >= lo) & (fx <= hi))[None, :] & ((fy >= lo - 0.04) & (fy <= hi - 0.04))[:, None]
+    return Image.fromarray((rgb * inside[..., None]).astype(np.uint8))
 
-def reveal_mask(k, W, H, block):
-    """Block-wise Bayer threshold mask (H, W, 1): cells whose threshold < k are revealed."""
-    gh, gw = -(-H // block), -(-W // block)
-    thr = np.tile(BAYER8, (gh // 8 + 1, gw // 8 + 1))[:gh, :gw]
-    return np.kron((thr < k).astype(np.float32), np.ones((block, block), np.float32))[:H, :W][..., None]
+def reveal_mask(k, field):
+    """(H, W, 1) mask on the field grid: cells whose Bayer threshold < k are revealed."""
+    return (field.thr < k).astype(np.float32)[field.row_of_y[:, None], field.col_of_x[None, :]][..., None]
 
 # ---------- sequence: field -> dither -> clear ----------
-def sequence_frame(frame, t, field, W, H, block, lime, lut):
-    """t in 0..1. 0-0.35 field brightens; 0.35-0.65 field dissolves into dither; 0.65-1 dither resolves to clear."""
+def sequence_frame(frame, t, field, W, H, lime, lut, levels_n=4, fill=0.82):
+    """t in 0..1. 0-0.35 field brightens; 0.35-0.65 each cell's number lights up into its block; 0.65-1 blocks resolve to clear."""
     if t < 0.35:
         return field.render(frame, gain=0.35 + 0.65 * (t / 0.35))
-    dith = state_dither(frame, W, H, block, lime, lut=lut)
+    dith = np.asarray(state_dither(frame, field, lime, levels_n, fill=fill, lut=lut), dtype=np.float32)
     if t < 0.65:
         k = (t - 0.35) / 0.30
-        fld = np.asarray(field.render(frame), dtype=np.float32); dth = np.asarray(dith, dtype=np.float32)
-        # dissolve cell by cell using Bayer thresholds so it reads as data resolving, not a crossfade
-        mask = reveal_mask(k, W, H, block)
-        return Image.fromarray((fld * (1 - mask) + dth * mask).astype(np.uint8))
+        fld = np.asarray(field.render(frame), dtype=np.float32); mask = reveal_mask(k, field)
+        return Image.fromarray((fld * (1 - mask) + dith * mask).astype(np.uint8))
     k = (t - 0.65) / 0.35
-    clr = np.asarray(state_clear(frame, W, H), dtype=np.float32); dth = np.asarray(dith, dtype=np.float32)
-    mask = reveal_mask(k, W, H, block)
-    return Image.fromarray((dth * (1 - mask) + clr * mask).astype(np.uint8))
+    clr = np.asarray(state_clear(frame, W, H), dtype=np.float32); mask = reveal_mask(k, field)
+    return Image.fromarray((dith * (1 - mask) + clr * mask).astype(np.uint8))
 
 # ---------- io ----------
 def even(n): return int(n) // 2 * 2
@@ -138,7 +138,7 @@ def main():
     ap.add_argument("--state", default="all", choices=["field", "dither", "clear", "all", "sequence"])
     ap.add_argument("--width", type=int, default=None, help="output width (default: source)")
     ap.add_argument("--cols", type=int, default=72, help="numbers per row in the field state")
-    ap.add_argument("--block", type=int, default=12, help="pixel block size in the dither state, px")
+    ap.add_argument("--fill", type=float, default=0.82, help="how much of each cell a dither block fills (0.5 to 1)")
     ap.add_argument("--levels", type=int, default=4, help="tone levels in the dither state")
     ap.add_argument("--fps", type=int, default=24)
     ap.add_argument("--reroll", type=float, default=0.05, help="share of field cells that change each frame")
@@ -158,7 +158,7 @@ def main():
         W = even(a.width or im.width); H = even(W * im.height / im.width)
         field = Field(W, H, a.cols, a.lime)
         if a.state in ("field", "all"): field.render(im).save(out / f"{stem}-field.png")
-        if a.state in ("dither", "all"): state_dither(im, W, H, a.block, a.lime, a.levels, lut=lut).save(out / f"{stem}-dither.png")
+        if a.state in ("dither", "all"): state_dither(im, field, a.lime, a.levels, fill=a.fill, lut=lut).save(out / f"{stem}-dither.png")
         if a.state in ("clear", "all"): state_clear(im, W, H).save(out / f"{stem}-clear.png")
         if a.state == "sequence":
             tmp = Path(tempfile.mkdtemp()); od = tmp / "out"; od.mkdir()
@@ -166,7 +166,7 @@ def main():
             for i in range(n + hold):
                 t = min(1.0, i / max(n - 1, 1))
                 if i and t < 0.65: field.reroll(a.reroll)
-                sequence_frame(im, t, field, W, H, a.block, a.lime, lut).save(od / f"f{i + 1:05d}.png")
+                sequence_frame(im, t, field, W, H, a.lime, lut, a.levels, a.fill).save(od / f"f{i + 1:05d}.png")
             encode(od, a.fps, out / f"{stem}-resolve.mp4"); shutil.rmtree(tmp)
         print("wrote", *sorted(p.name for p in out.glob(f"{stem}-*")))
         return
@@ -185,11 +185,11 @@ def main():
         if i: field.reroll(a.reroll)
         for s in states:
             if s == "field": o = field.render(im)
-            elif s == "dither": o = state_dither(im, W, H, a.block, a.lime, a.levels, lut=lut)
+            elif s == "dither": o = state_dither(im, field, a.lime, a.levels, fill=a.fill, lut=lut)
             elif s == "clear": o = state_clear(im, W, H)
             else:
                 t = 0.0 if i / a.fps <= t0 else min(1.0, (i / a.fps - t0) / max(t1 - t0, 1e-6))
-                o = sequence_frame(im, t, field, W, H, a.block, a.lime, lut)
+                o = sequence_frame(im, t, field, W, H, a.lime, lut, a.levels, a.fill)
             o.save(dirs[s] / f.name)
     for s, d in dirs.items():
         encode(d, a.fps, out / f"{stem}-{'resolve' if s == 'sequence' else s}.mp4")
