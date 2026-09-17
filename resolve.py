@@ -97,10 +97,12 @@ def state_dither(frame, field, lime, levels_n=4, gamma=1.2, fill=1.0, lut=None):
     q = np.clip(np.floor(lum * (levels_n - 1) + field.thr) / (levels_n - 1), 0, 1)
     lut = lut if lut is not None else ramp_lut(lime)
     rgb = lut[(q * 255).astype(np.uint8)][field.row_of_y[:, None], field.col_of_x[None, :]]
-    # inset each block so it reads as a box, centred on the glyph
+    if fill >= 1.0:
+        return Image.fromarray(rgb.astype(np.uint8))
+    # optional inset so each block reads as a box, shifted up slightly to sit on the glyph
     fx = (np.arange(field.W) / field.cw) % 1.0; fy = (np.arange(field.H) / field.ch) % 1.0
-    lo, hi = (1 - fill) / 2, 1 - (1 - fill) / 2
-    inside = ((fx >= lo) & (fx <= hi))[None, :] & ((fy >= lo - 0.04) & (fy <= hi - 0.04))[:, None]
+    lo, hi = (1 - fill) / 2, 1 - (1 - fill) / 2; up = min(0.04, lo)
+    inside = ((fx >= lo) & (fx <= hi))[None, :] & ((fy >= lo - up) & (fy <= hi - up))[:, None]
     return Image.fromarray((rgb * inside[..., None]).astype(np.uint8))
 
 def reveal_mask(k, field):
