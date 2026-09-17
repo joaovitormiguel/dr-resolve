@@ -7,7 +7,7 @@ uploads land in ./jobs/<id>/in, results in ./jobs/<id>/out.
 import json, re, subprocess, sys, threading, time, uuid, webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 HERE = Path(__file__).resolve().parent
 JOBS = HERE / "jobs"; JOBS.mkdir(exist_ok=True)
@@ -66,7 +66,7 @@ const fd=new FormData($('#f'));const r=await fetch('/render',{method:'POST',body
 const poll=async()=>{const s=await (await fetch('/status?id='+id)).json();$('#status').textContent=s.log;
 if(s.status==='done'){$('#go').disabled=false;render(id,s.files)}else if(s.status==='error'){$('#go').disabled=false}else setTimeout(poll,1500)};poll()};
 function render(id,files){const out=$('#out');out.innerHTML='';for(const f of files){const url='/jobs/'+id+'/out/'+encodeURIComponent(f);const fig=document.createElement('figure');
-const isv=/\.mp4$/i.test(f);fig.innerHTML=(isv?`<video src="${url}" controls autoplay loop muted playsinline></video>`:`<img src="${url}">`)+`<figcaption><span>${f}</span><a href="${url}" download>Download</a></figcaption>`;out.appendChild(fig)}}
+const isv=/\.mp4$/i.test(f);fig.innerHTML=(isv?`<video src="${url}" controls autoplay loop muted playsinline></video>`:`<img src="${url}">`)+`<figcaption><span>${f}</span><a href="${url}?download=1" download="${f}">Download</a></figcaption>`;out.appendChild(fig)}}
 </script></body></html>"""
 
 def parse_multipart(body, ctype):
@@ -83,7 +83,8 @@ def parse_multipart(body, ctype):
 
 def run_job(jid, fields, filename, data):
     job = jobs[jid]; d = JOBS / jid; (d / "in").mkdir(parents=True); (d / "out").mkdir()
-    src = d / "in" / filename; src.write_bytes(data)
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", filename).strip("-.") or "input"
+    src = d / "in" / safe; src.write_bytes(data)
     is_video = src.suffix.lower() in {".mp4", ".mov", ".webm", ".m4v"}
     cmd = [sys.executable, str(HERE / "resolve.py"), str(src), str(d / "out"), "--state", fields.get("state", "all")]
     for k in ("cols", "block", "levels", "fps", "reroll"):
@@ -114,10 +115,12 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/status":
             j = jobs.get(parse_qs(u.query).get("id", [""])[0]); return self.send(200, json.dumps(j or {"status": "error", "log": "unknown job"}).encode(), "application/json")
         if u.path.startswith("/jobs/"):
-            p = (HERE / u.path.lstrip("/")).resolve()
+            p = (HERE / unquote(u.path).lstrip("/")).resolve()
             if not str(p).startswith(str(JOBS)) or not p.is_file(): return self.send(404, b"not found", "text/plain")
             ext = p.suffix.lower(); ctype = {"png": "image/png", "jpg": "image/jpeg", "mp4": "video/mp4"}.get(ext[1:], "application/octet-stream")
-            data = p.read_bytes(); self.send_response(200); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
+            data = p.read_bytes(); self.send_response(200); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(data)))
+            if "download" in parse_qs(u.query): self.send_header("Content-Disposition", f'attachment; filename="{p.name}"')
+            self.end_headers(); self.wfile.write(data); return
         self.send(404, b"not found", "text/plain")
     def do_POST(self):
         if urlparse(self.path).path != "/render": return self.send(404, b"not found", "text/plain")
