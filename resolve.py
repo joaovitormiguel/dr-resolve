@@ -98,6 +98,12 @@ def state_dither(frame, W, H, block, lime, levels_n=4, gamma=1.2, lut=None):
     small = Image.fromarray(rgb, "RGB")
     return small.resize((gw * block, gh * block), Image.NEAREST).resize((W, H), Image.NEAREST)
 
+def reveal_mask(k, W, H, block):
+    """Block-wise Bayer threshold mask (H, W, 1): cells whose threshold < k are revealed."""
+    gh, gw = -(-H // block), -(-W // block)
+    thr = np.tile(BAYER8, (gh // 8 + 1, gw // 8 + 1))[:gh, :gw]
+    return np.kron((thr < k).astype(np.float32), np.ones((block, block), np.float32))[:H, :W][..., None]
+
 # ---------- sequence: field -> dither -> clear ----------
 def sequence_frame(frame, t, field, W, H, block, lime, lut):
     """t in 0..1. 0-0.35 field brightens; 0.35-0.65 field dissolves into dither; 0.65-1 dither resolves to clear."""
@@ -108,15 +114,11 @@ def sequence_frame(frame, t, field, W, H, block, lime, lut):
         k = (t - 0.35) / 0.30
         fld = np.asarray(field.render(frame), dtype=np.float32); dth = np.asarray(dith, dtype=np.float32)
         # dissolve cell by cell using Bayer thresholds so it reads as data resolving, not a crossfade
-        gh, gw = (H // block), (W // block)
-        thr = np.tile(BAYER8, (gh // 8 + 1, gw // 8 + 1))[:gh, :gw]
-        mask = np.kron((thr < k).astype(np.float32), np.ones((block, block), np.float32))[:H, :W][..., None]
+        mask = reveal_mask(k, W, H, block)
         return Image.fromarray((fld * (1 - mask) + dth * mask).astype(np.uint8))
     k = (t - 0.65) / 0.35
     clr = np.asarray(state_clear(frame, W, H), dtype=np.float32); dth = np.asarray(dith, dtype=np.float32)
-    gh, gw = (H // block), (W // block)
-    thr = np.tile(BAYER8, (gh // 8 + 1, gw // 8 + 1))[:gh, :gw]
-    mask = np.kron((thr < k).astype(np.float32), np.ones((block, block), np.float32))[:H, :W][..., None]
+    mask = reveal_mask(k, W, H, block)
     return Image.fromarray((dth * (1 - mask) + clr * mask).astype(np.uint8))
 
 # ---------- io ----------
