@@ -38,8 +38,9 @@ button:disabled{opacity:.5;cursor:wait}.drop{border:1px dashed var(--border);bor
 <div class="grid"><form class="card" id="f">
 <div class="drop" id="drop">Drop a file here or click to choose<br><span id="fname" class="tag hidden"></span></div>
 <input type="file" id="file" name="file" accept="image/*,video/*" class="hidden" required>
-<label>State</label><select name="state" id="state"><option value="all">All three stills (field, dither, clear)</option><option value="sequence">Sequence: field → dither → clear</option><option value="field">Field only</option><option value="dither">Dither only</option><option value="clear">Clear only</option><option value="ascii">ASCII only (glyphs by brightness, edges traced)</option></select>
-<div id="asciiopts"><div class="row"><div><label>Charset</label><select name="charset"><option value="code">code (symbols)</option><option value="digits">digits</option><option value="currency">currency</option><option value="arrows">arrows</option><option value="binary">binary</option><option value="blocks">blocks</option></select></div><div><label>Field glyphs in sequence</label><select name="glyphs"><option value="digits">numbers</option><option value="ascii">ascii charset</option></select></div></div>
+<label>State</label><select name="state" id="state"><option value="all">All three stills (field, dither, clear)</option><option value="sequence">Sequence: field → dither → clear</option><option value="field">Field only</option><option value="dither">Dither only</option><option value="clear">Clear only</option><option value="ascii">ASCII only (glyphs by brightness, edges traced)</option><option value="icons">Icons only (one icon per cell, timed flips)</option></select>
+<div id="iconopts"><label>Icon pool (random per cell)</label><input name="icons" value="container,truck,ship,train-front,anchor,package,file-text,dollar-sign"><label>Flips: seconds:icon, comma separated</label><input name="flip" placeholder="1.5:mail, 4:random"><div class="hint">Icons available: mail, container, truck, ship, train-front, anchor, package, file-text, dollar-sign, map-pin, clock, check. "random" flips back to the pool.</div></div>
+<div id="asciiopts"><div class="row"><div><label>Charset</label><select name="charset"><option value="code">code (symbols)</option><option value="digits">digits</option><option value="currency">currency</option><option value="arrows">arrows</option><option value="binary">binary</option><option value="blocks">blocks</option></select></div><div><label>Field glyphs in sequence</label><select name="glyphs"><option value="digits">numbers</option><option value="ascii">ascii charset</option><option value="icons">icons</option></select></div></div>
 <div class="row"><div><label>Trace edges</label><select name="edges"><option value="1">yes</option><option value="0">no</option></select></div><div><label>Glyph colour</label><select name="flat"><option value="0">brightness ramp</option><option value="1">flat</option></select></div></div></div>
 <label>Output width <span class="val" id="widthv">source</span></label><input type="number" name="width" id="width" placeholder="source width" min="240" step="2">
 <div class="row"><div><label>Field columns <span class="val" id="colsv">72</span></label><input type="range" name="cols" id="cols" min="24" max="160" value="72"></div>
@@ -89,12 +90,12 @@ def run_job(jid, fields, filename, data):
     src = d / "in" / safe; src.write_bytes(data)
     is_video = src.suffix.lower() in {".mp4", ".mov", ".webm", ".m4v"}
     cmd = [sys.executable, str(HERE / "resolve.py"), str(src), str(d / "out"), "--state", fields.get("state", "all")]
-    for k in ("cols", "fill", "levels", "fps", "reroll", "charset", "glyphs"):
+    for k in ("cols", "fill", "levels", "fps", "reroll", "charset", "glyphs", "icons", "flip"):
         if fields.get(k): cmd += [f"--{k}", fields[k]]
     if fields.get("width"): cmd += ["--width", fields["width"]]
     if fields.get("edges") == "0": cmd += ["--no-edges"]
     if fields.get("flat") == "1": cmd += ["--flat"]
-    if fields.get("state") == "sequence":
+    if fields.get("state") in ("sequence", "icons"):
         if is_video:
             for k in ("start", "end"):
                 if fields.get(k): cmd += [f"--{k}", fields[k]]
@@ -105,7 +106,7 @@ def run_job(jid, fields, filename, data):
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         job["status"] = "error"; job["log"] = "Render failed:\n" + (p.stderr or p.stdout)[-2000:]; return
-    order = ["field", "ascii", "dither", "clear", "resolve"]
+    order = ["field", "ascii", "icons", "dither", "clear", "resolve"]
     files = sorted((f.name for f in (d / "out").iterdir()), key=lambda n: next((i for i, s in enumerate(order) if f"-{s}." in n), 9))
     job["files"] = files; job["status"] = "done"; job["log"] = f"Done in {time.time() - job['started']:.0f}s. " + p.stdout.strip()
 
@@ -136,6 +137,8 @@ class H(BaseHTTPRequestHandler):
         self.send(200, json.dumps({"id": jid}).encode(), "application/json")
 
 if __name__ == "__main__":
-    print(f"Resolve UI at http://localhost:{PORT}  (Ctrl+C to stop)")
-    threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{PORT}")).start()
-    HTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    import os
+    host = os.environ.get("HOST", "127.0.0.1")
+    print(f"Resolve UI at http://{'localhost' if host == '127.0.0.1' else host}:{PORT}  (Ctrl+C to stop)")
+    if host == "127.0.0.1": threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{PORT}")).start()
+    HTTPServer((host, PORT), H).serve_forever()
