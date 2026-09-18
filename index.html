@@ -1,0 +1,133 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Resolve</title>
+<style>
+@font-face{font-family:JBM;src:url(fonts/JetBrainsMono-Medium.ttf)}
+:root{--bg:#000;--surface:#111;--border:#262626;--text:#E5E7EB;--muted:#9CA3AF;--lime:#CDFE7C}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,"DM Sans",system-ui,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:32px 16px 64px}h1{font-size:28px;margin:0 0 4px}p.sub{color:var(--muted);margin:0 0 28px}
+.grid{display:grid;grid-template-columns:370px 1fr;gap:24px}@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;min-width:0}
+label{display:block;font:12px JBM,ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+input,select{width:100%;background:#000;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 10px;font:inherit}
+input[type=range]{padding:0}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.val{color:var(--lime);margin-left:6px}
+button{width:100%;margin-top:18px;background:var(--lime);color:#000;border:0;border-radius:8px;padding:12px;font:600 15px inherit;cursor:pointer}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--border);margin-top:10px;font-weight:500}
+button:disabled{opacity:.5;cursor:wait}.drop{border:1px dashed var(--border);border-radius:10px;padding:18px;text-align:center;color:var(--muted);cursor:pointer}
+.drop.on{border-color:var(--lime);color:var(--text)}.status{font:12px JBM,ui-monospace,monospace;color:var(--muted);white-space:pre-wrap;margin-top:12px;min-height:18px}
+.out{display:grid;gap:16px}.out figure{margin:0}.out canvas,.out video,.out img{width:100%;border-radius:10px;border:1px solid var(--border);background:#000;display:block}
+.out figcaption{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:6px}.out a{color:var(--lime);text-decoration:none;cursor:pointer}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}.hidden{display:none}.tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:1px 8px;font:11px JBM,monospace;color:var(--lime)}
+</style></head><body><main>
+<h1>Resolve</h1><p class="sub">Field → dither → clear. Runs entirely in your browser; nothing is uploaded.</p>
+<div class="grid"><div class="card">
+<div class="drop" id="drop">Drop an image or video, or click to choose<br><span id="fname" class="tag hidden"></span></div>
+<input type="file" id="file" accept="image/*,video/*" class="hidden">
+<button class="ghost" id="demo" type="button">Try it with the Drayrates mark</button>
+<label>State</label><select id="state"><option value="all">All stills (field, ascii, dither, clear)</option><option value="sequence">Sequence: glyphs → dither → clear (video)</option><option value="field">Field (numbers)</option><option value="ascii">ASCII</option><option value="icons">Icons with flips</option><option value="dither">Dither</option><option value="clear">Clear</option></select>
+<div class="row"><div><label>Output width</label><input type="number" id="width" placeholder="source" min="240" step="2"></div><div><label>FPS</label><input type="number" id="fps" value="24" min="12" max="60"></div></div>
+<div class="row"><div><label>Columns <span class="val" id="colsv">72</span></label><input type="range" id="cols" min="16" max="160" value="72"></div><div><label>Dither levels <span class="val" id="levelsv">4</span></label><input type="range" id="levels" min="2" max="8" value="4"></div></div>
+<div class="row"><div><label>Reroll <span class="val" id="rerollv">0.05</span></label><input type="range" id="reroll" min="0" max="0.3" step="0.01" value="0.05"></div><div><label>Sequence glyphs</label><select id="glyphs"><option value="digits">numbers</option><option value="ascii">ascii</option><option value="icons">icons</option></select></div></div>
+<div class="row"><div><label>ASCII charset</label><select id="charset"><option>code</option><option>digits</option><option>currency</option><option>arrows</option><option>binary</option></select></div><div><label>Trace edges</label><select id="edges"><option value="1">yes</option><option value="0">no</option></select></div></div>
+<label>Icon pool</label><input id="icons" value="container,truck,ship,train-front,anchor,package,file-text,dollar-sign">
+<label>Icon flips (seconds:icon)</label><input id="flip" placeholder="1.5:mail, 3:random">
+<div class="hint">Icons: mail, container, truck, ship, train-front, anchor, package, file-text, dollar-sign, map-pin, clock, check.</div>
+<div id="imgTiming" class="row"><div><label>Length (s)</label><input type="number" id="seconds" value="4" step="0.5" min="1"></div><div><label>Hold clear (s)</label><input type="number" id="hold" value="1" step="0.5" min="0"></div></div>
+<div id="vidTiming" class="row hidden"><div><label>Resolve starts (s)</label><input type="number" id="start" value="1" step="0.5" min="0"></div><div><label>Clear by (s)</label><input type="number" id="end" value="5" step="0.5" min="0"></div></div>
+<button id="go">Render</button><div class="status" id="status"></div></div>
+<div class="card"><div class="out" id="out"><p class="hint">Results appear here. Subjects that fill the frame on dark backgrounds resolve best. Video export needs Chrome, Edge, or Safari 16.4+.</p></div></div></div></main>
+<script type="module">
+const $=s=>document.querySelector(s), status=m=>$('#status').textContent=m;
+const BAYER=[[0,32,8,40,2,34,10,42],[48,16,56,24,50,18,58,26],[12,44,4,36,14,46,6,38],[60,28,52,20,62,30,54,22],[3,35,11,43,1,33,9,41],[51,19,59,27,49,17,57,25],[15,47,7,39,13,45,5,37],[63,31,55,23,61,29,53,21]].map(r=>r.map(v=>(v+.5)/64));
+const CHARSETS={digits:"0123456789",code:" .,:;-~=+*<>/\\|[]{}()#%&$@",currency:" .:-=$#%&@",arrows:" .-<>^v=+",binary:" .01"};
+function rampLut(hex){const h=hex.replace('#','');const lime=[0,2,4].map(i=>parseInt(h.slice(i,i+2),16));
+ const stops=[[0,[0,0,0]],[.12,[14,16,10]],[.45,[70,78,48]],[.75,[150,175,90]],[1,lime]],lut=[];
+ for(let i=0;i<256;i++){const t=i/255;for(let s=0;s<stops.length-1;s++){const [p0,c0]=stops[s],[p1,c1]=stops[s+1];if(t<=p1){const k=p1===p0?0:(t-p0)/(p1-p0);lut.push(`rgb(${c0.map((a,j)=>Math.round(a+(c1[j]-a)*k)).join(',')})`);break}}}return lut}
+const LUT=rampLut('#CDFE7C');
+function rng(seed){let s=seed>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296}}
+const hash=(a,b,c)=>{let h=(a*73856093)^(b*19349663)^(c*83492791);h=(h^(h>>>13))*1274126177;return (h^(h>>>16))>>>0};
+
+class Grid{constructor(W,H,cols){this.W=W;this.H=H;this.cols=cols;this.cw=W/cols;this.ch=this.cw*.9;this.rows=Math.ceil(H/this.ch);
+  const r=rng(7);this.nums=Array.from({length:this.rows},()=>Array.from({length:cols},()=>Math.floor(r()*100)));this.r=r;
+  this.small=new OffscreenCanvas(cols,this.rows);this.fine=new OffscreenCanvas(cols*2,this.rows*2);this.fontPx=Math.max(6,Math.floor(this.ch*.62))}
+ thr(r,c){return BAYER[r%8][c%8]} x0(c){return Math.round(c*this.cw)} y0(r){return Math.round(r*this.ch)}
+ reroll(rate){for(const row of this.nums)for(let c=0;c<row.length;c++)if(this.r()<rate)row[c]=Math.floor(this.r()*100)}
+ lum(src,cv,levels=true){const w=cv.width,h=cv.height,x=cv.getContext('2d',{willReadFrequently:true});x.imageSmoothingQuality='high';x.drawImage(src,0,0,w,h);
+  const d=x.getImageData(0,0,w,h).data,L=new Float32Array(w*h);for(let i=0;i<L.length;i++)L[i]=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];
+  if(levels){const s=Float32Array.from(L).sort(),lo=s[Math.floor(s.length*.02)],hi=s[Math.min(s.length-1,Math.floor(s.length*.995))],span=Math.max(hi-lo,1);for(let i=0;i<L.length;i++)L[i]=Math.min(1,Math.max(0,(L[i]-lo)/span))}else for(let i=0;i<L.length;i++)L[i]/=255;return L}}
+
+function textSetup(ctx,g){ctx.font=`${g.fontPx}px JBM`;ctx.textBaseline='middle';ctx.textAlign='center'}
+function drawField(ctx,g,src,gain=1){ctx.fillStyle='#000';ctx.fillRect(0,0,g.W,g.H);textSetup(ctx,g);const L=g.lum(src,g.small);
+ for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++){const v=Math.pow(L[r*g.cols+c],1.6)*gain;if(v<.04)continue;ctx.fillStyle=LUT[Math.min(255,v*255|0)];ctx.fillText(String(g.nums[r][c]).padStart(2,'0'),(c+.5)*g.cw,(r+.5)*g.ch)}}
+const rampCache={};
+function charRamp(name,g){const key=name+g.fontPx;if(rampCache[key])return rampCache[key];const cv=new OffscreenCanvas(g.fontPx*2,g.fontPx*2),x=cv.getContext('2d',{willReadFrequently:true});
+ const out=[...(CHARSETS[name]||name)].map(ch=>{x.clearRect(0,0,cv.width,cv.height);x.font=`${g.fontPx}px JBM`;x.fillStyle='#fff';x.textBaseline='middle';x.fillText(ch,2,g.fontPx);const d=x.getImageData(0,0,cv.width,cv.height).data;let s=0;for(let i=3;i<d.length;i+=4)s+=d[i];return [s,ch]}).sort((a,b)=>a[0]-b[0]).map(p=>p[1]);return rampCache[key]=out}
+function drawAscii(ctx,g,src,o,gain=1){ctx.fillStyle='#000';ctx.fillRect(0,0,g.W,g.H);textSetup(ctx,g);const L=g.lum(src,g.small),ramp=charRamp(o.charset,g),n=ramp.length,floor=.12;
+ let mag,deg,mx=0;if(o.edges){const F=g.lum(src,g.fine),w=g.cols*2,h=g.rows*2;mag=new Float32Array(g.cols*g.rows);deg=new Float32Array(g.cols*g.rows);
+  for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++){let gx=0,gy=0;for(let dy=0;dy<2;dy++)for(let dx=0;dx<2;dx++){const x=Math.min(w-2,Math.max(1,c*2+dx)),y=Math.min(h-2,Math.max(1,r*2+dy));gx+=F[y*w+x+1]-F[y*w+x-1];gy+=F[(y+1)*w+x]-F[(y-1)*w+x]}
+   const m=Math.hypot(gx,gy);mag[r*g.cols+c]=m;if(m>mx)mx=m;deg[r*g.cols+c]=((Math.atan2(gy,gx)*180/Math.PI+90)%180+180)%180}}
+ for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++){const i=r*g.cols+c;let v=Math.min(1,Math.pow(L[i],1.1)*gain),ch;
+  if(o.edges&&mx>0&&mag[i]>.35*mx){const d=deg[i];ch=d<22.5?'-':d<67.5?'/':d<112.5?'|':d<157.5?'\\':'-';v=Math.max(v,.75)}
+  else{if(v<floor)continue;ch=ramp[Math.min(n-1,Math.round((v-floor)/(1-floor)*(n-1)))]}
+  if(ch===' ')continue;ctx.fillStyle=LUT[Math.min(255,v*255|0)];ctx.fillText(ch,(c+.5)*g.cw,(r+.5)*g.ch)}}
+const iconImgs={},tintCache=new Map();
+async function loadIcons(names){await Promise.all(names.filter(n=>n!=='random'&&!iconImgs[n]).map(n=>new Promise((res,rej)=>{const im=new Image();im.onload=()=>{iconImgs[n]=im;res()};im.onerror=()=>rej(new Error('Unknown icon: '+n));im.src=`icons/${n}.png`})))}
+function tinted(name,level,w,h){const key=`${name}|${level}|${w}|${h}`;let cv=tintCache.get(key);if(!cv){cv=new OffscreenCanvas(w,h);const x=cv.getContext('2d');x.drawImage(iconImgs[name],0,0,w,h);x.globalCompositeOperation='source-in';x.fillStyle=LUT[Math.min(255,level*17)];x.fillRect(0,0,w,h);tintCache.set(key,cv)}return cv}
+function drawIcons(ctx,g,src,o,t,gain=1){ctx.fillStyle='#000';ctx.fillRect(0,0,g.W,g.H);const L=g.lum(src,g.small),w=Math.max(4,g.cw*.78|0),h=Math.max(4,g.ch*.78|0),pool=o.pool,dur=.5;
+ for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++){const v=Math.min(1,Math.pow(L[r*g.cols+c],1.3)*gain);if(v<.05)continue;let name=pool[hash(0,r,c)%pool.length],sq=1;
+  for(let f=0;f<o.flips.length;f++){const [ft,fn]=o.flips[f],tgt=fn==='random'?pool[hash(f+1,r,c)%pool.length]:fn,p=(t-(ft+g.thr(r,c)*dur*.8))/(dur*.2);if(p>=1)name=tgt;else if(p>0){sq=Math.abs(Math.cos(Math.PI*p));if(p>.5)name=tgt;break}}
+  const iw=Math.max(1,w*sq|0);ctx.drawImage(tinted(name,Math.min(15,v*15|0),w,h),(c+.5)*g.cw-iw/2,(r+.5)*g.ch-h/2,iw,h)}}
+function ditherColors(g,src,levels){const L=g.lum(src,g.small),out=new Array(L.length);for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++){const i=r*g.cols+c,q=Math.min(1,Math.max(0,Math.floor(Math.pow(L[i],1.2)*(levels-1)+g.thr(r,c))/(levels-1)));out[i]=LUT[q*255|0]}return out}
+function cellRect(g,r,c){const x=g.x0(c),y=g.y0(r);return [x,y,g.x0(c+1)-x,g.y0(r+1)-y]}
+function drawDither(ctx,g,src,levels,k=2){const col=ditherColors(g,src,levels);for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++)if(g.thr(r,c)<k){ctx.fillStyle=col[r*g.cols+c];ctx.fillRect(...cellRect(g,r,c))}}
+function drawClear(ctx,g,src,k=2){if(k>=1){ctx.filter='contrast(1.06) brightness(.9)';ctx.drawImage(src,0,0,g.W,g.H);ctx.filter='none';return}
+ g.clearCv??=new OffscreenCanvas(g.W,g.H);const x=g.clearCv.getContext('2d');x.filter='contrast(1.06) brightness(.9)';x.drawImage(src,0,0,g.W,g.H);
+ for(let r=0;r<g.rows;r++)for(let c=0;c<g.cols;c++)if(g.thr(r,c)<k){const R=cellRect(g,r,c);ctx.drawImage(g.clearCv,...R,...R)}}
+function drawGlyphs(ctx,g,src,o,secs,gain){if(o.glyphs==='ascii')drawAscii(ctx,g,src,o,gain);else if(o.glyphs==='icons')drawIcons(ctx,g,src,o,secs,gain);else drawField(ctx,g,src,gain)}
+function drawState(ctx,g,src,state,o,secs=0,t=1){
+ if(state==='field')drawField(ctx,g,src);else if(state==='ascii')drawAscii(ctx,g,src,o);else if(state==='icons')drawIcons(ctx,g,src,o,secs);
+ else if(state==='dither'){ctx.fillStyle='#000';ctx.fillRect(0,0,g.W,g.H);drawDither(ctx,g,src,o.levels)}else if(state==='clear')drawClear(ctx,g,src);
+ else{if(t<.35)drawGlyphs(ctx,g,src,o,secs,.35+.65*t/.35);else if(t<.65){drawGlyphs(ctx,g,src,o,secs,1);drawDither(ctx,g,src,o.levels,(t-.35)/.3)}else{ctx.fillStyle='#000';ctx.fillRect(0,0,g.W,g.H);drawDither(ctx,g,src,o.levels);drawClear(ctx,g,src,(t-.65)/.35)}}}
+
+let source=null,isVideo=false,srcName='resolve';
+function setSource(el,video,name){source=el;isVideo=video;srcName=name.replace(/\.[^.]+$/,'').replace(/[^A-Za-z0-9._-]+/g,'-');$('#fname').textContent=name;$('#fname').classList.remove('hidden');sync()}
+function loadFile(f){const url=URL.createObjectURL(f);if(f.type.startsWith('video')||/\.(mp4|mov|webm|m4v)$/i.test(f.name)){const v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';v.onloadeddata=()=>setSource(v,true,f.name);v.onerror=()=>status('This browser cannot decode that video. Try MP4 (H.264).');v.src=url}else{const im=new Image();im.onload=()=>setSource(im,false,f.name);im.src=url}}
+const drop=$('#drop'),file=$('#file');drop.onclick=()=>file.click();file.onchange=()=>file.files[0]&&loadFile(file.files[0]);
+['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('on')}));['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('on')}));
+drop.addEventListener('drop',ev=>ev.dataTransfer.files[0]&&loadFile(ev.dataTransfer.files[0]));
+$('#demo').onclick=()=>{const im=new Image();im.onload=()=>{setSource(im,false,'drayrates-mark.png');$('#cols').value=40;$('#colsv').textContent=40};im.src='sample/mark.png'};
+function sync(){const st=$('#state').value,timed=st==='sequence'||st==='icons';$('#imgTiming').classList.toggle('hidden',!(timed&&!isVideo));$('#vidTiming').classList.toggle('hidden',!(st==='sequence'&&isVideo))}
+$('#state').onchange=sync;for(const id of['cols','levels','reroll'])$('#'+id).oninput=e=>$('#'+id+'v').textContent=e.target.value;
+
+function opts(){const pool=$('#icons').value.split(',').map(s=>s.trim()).filter(Boolean),flips=$('#flip').value.split(',').map(s=>s.trim()).filter(Boolean).map(p=>{const [t,n]=p.split(':');return [parseFloat(t),(n||'').trim()]}).filter(f=>!isNaN(f[0])&&f[1]).sort((a,b)=>a[0]-b[0]);
+ return {charset:$('#charset').value,edges:$('#edges').value==='1',levels:+$('#levels').value,glyphs:$('#glyphs').value,pool,flips,reroll:+$('#reroll').value,fps:+$('#fps').value||24}}
+const even=n=>Math.max(2,Math.floor(n/2)*2);
+function dims(){const sw=isVideo?source.videoWidth:source.naturalWidth,sh=isVideo?source.videoHeight:source.naturalHeight,W=even(+$('#width').value||sw);return [W,even(W*sh/sw)]}
+const seek=(v,t)=>new Promise(res=>{const done=()=>{v.removeEventListener('seeked',done);res()};v.addEventListener('seeked',done);v.currentTime=Math.min(t,Math.max(0,v.duration-.001))});
+function figure(el,name,href){const fig=document.createElement('figure'),cap=document.createElement('figcaption'),a=document.createElement('a');fig.appendChild(el);cap.innerHTML=`<span>${name}</span>`;a.textContent='Download';a.download=name;
+ if(href)a.href=href;else a.onclick=()=>el.toBlob(b=>{a.href=URL.createObjectURL(b);a.onclick=null;a.click()},'image/png');cap.appendChild(a);fig.appendChild(cap);$('#out').appendChild(fig)}
+
+async function encode(W,H,fps,total,draw){if(!('VideoEncoder'in window))throw new Error('This browser has no video encoder. Use Chrome, Edge, or Safari 16.4+. Stills still work.');
+ const {Muxer,ArrayBufferTarget}=await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.5/+esm');let codec=null;
+ for(const c of['avc1.640033','avc1.4d0033','avc1.42003e','avc1.42001f']){try{if((await VideoEncoder.isConfigSupported({codec:c,width:W,height:H,bitrate:14e6,framerate:fps})).supported){codec=c;break}}catch{}}
+ if(!codec)throw new Error('No H.264 encoder available at this size. Try a smaller output width.');
+ const muxer=new Muxer({target:new ArrayBufferTarget(),video:{codec:'avc',width:W,height:H},fastStart:'in-memory'});let err=null;
+ const enc=new VideoEncoder({output:(c,m)=>muxer.addVideoChunk(c,m),error:e=>err=e});enc.configure({codec,width:W,height:H,bitrate:14e6,framerate:fps});
+ const cv=new OffscreenCanvas(W,H),ctx=cv.getContext('2d');
+ for(let i=0;i<total;i++){if(err)throw err;await draw(ctx,i);const fr=new VideoFrame(cv,{timestamp:Math.round(i*1e6/fps),duration:Math.round(1e6/fps)});enc.encode(fr,{keyFrame:i%(fps*2)===0});fr.close();
+  while(enc.encodeQueueSize>6)await new Promise(r=>setTimeout(r,4));if(i%4===0){status(`Rendering frame ${i+1} of ${total}`);await new Promise(r=>setTimeout(r))}}
+ await enc.flush();muxer.finalize();return new Blob([muxer.target.buffer],{type:'video/mp4'})}
+
+$('#go').onclick=async()=>{if(!source){status('Choose a file first, or try the demo.');return}const go=$('#go');go.disabled=true;$('#out').innerHTML='';
+ try{await document.fonts.load('16px JBM');const o=opts(),st=$('#state').value,[W,H]=dims(),g=new Grid(W,H,+$('#cols').value);
+  if(st==='icons'||o.glyphs==='icons'||st==='all')await loadIcons([...o.pool,...o.flips.map(f=>f[1])]);
+  const stills=st==='all'?['field','ascii','dither','clear']:(!isVideo&&!['sequence','icons'].includes(st)?[st]:null);
+  if(stills){if(isVideo)await seek(source,source.duration/2);for(const s of stills){const cv=document.createElement('canvas');cv.width=W;cv.height=H;drawState(cv.getContext('2d'),g,source,s,o);figure(cv,`${srcName}-${s}.png`)}status(`Done. ${W}×${H}, ${g.cols}×${g.rows} cells.`)}
+  else{const fps=o.fps;let total,draw;
+   if(isVideo){total=Math.max(1,Math.floor(source.duration*fps));const t0=+$('#start').value||0,t1=+$('#end').value||source.duration;
+    draw=async(ctx,i)=>{const secs=i/fps;await seek(source,secs);if(i)g.reroll(o.reroll);drawState(ctx,g,source,st,o,secs,st==='sequence'?(secs<=t0?0:Math.min(1,(secs-t0)/Math.max(t1-t0,1e-6))):1)}}
+   else{const n=Math.round((+$('#seconds').value||4)*fps),hold=st==='sequence'?Math.round((+$('#hold').value||0)*fps):0;total=n+hold;
+    draw=async(ctx,i)=>{const t=Math.min(1,i/Math.max(n-1,1));if(i&&t<.65)g.reroll(o.reroll);drawState(ctx,g,source,st,o,i/fps,t)}}
+   const blob=await encode(W,H,fps,total,draw),url=URL.createObjectURL(blob),v=document.createElement('video');Object.assign(v,{src:url,controls:true,autoplay:true,loop:true,muted:true,playsInline:true});
+   figure(v,`${srcName}-${st==='sequence'?'resolve':st}.mp4`,url);status(`Done. ${total} frames, ${(blob.size/1e6).toFixed(1)} MB.`);window.__lastBlob=blob.size}
+ }catch(e){status('Error: '+e.message);console.error(e)}go.disabled=false};
+</script></body></html>

@@ -1,5 +1,9 @@
 # Resolve
 
+**Use it in your browser, no install: https://joaovitormiguel.github.io/dr-resolve/**
+
+The web version runs entirely on your machine (canvas + the browser's video encoder); nothing is uploaded. Stills work everywhere; MP4 export needs Chrome, Edge, or Safari 16.4+. The Python tool and local UI below do the same thing offline and are faster on long clips.
+
 Renders the Drayrates data-layer motif from any image or video.
 
 The idea: under every drayage lane there is a layer of numbers nobody could read. Drayrates is the act of that layer becoming legible. The tool renders the three states of that idea and the transition between them.
