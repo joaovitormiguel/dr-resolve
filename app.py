@@ -38,7 +38,9 @@ button:disabled{opacity:.5;cursor:wait}.drop{border:1px dashed var(--border);bor
 <div class="grid"><form class="card" id="f">
 <div class="drop" id="drop">Drop a file here or click to choose<br><span id="fname" class="tag hidden"></span></div>
 <input type="file" id="file" name="file" accept="image/*,video/*" class="hidden" required>
-<label>State</label><select name="state" id="state"><option value="all">All three stills (field, dither, clear)</option><option value="sequence">Sequence: field → dither → clear</option><option value="field">Field only</option><option value="dither">Dither only</option><option value="clear">Clear only</option></select>
+<label>State</label><select name="state" id="state"><option value="all">All three stills (field, dither, clear)</option><option value="sequence">Sequence: field → dither → clear</option><option value="field">Field only</option><option value="dither">Dither only</option><option value="clear">Clear only</option><option value="ascii">ASCII only (glyphs by brightness, edges traced)</option></select>
+<div id="asciiopts"><div class="row"><div><label>Charset</label><select name="charset"><option value="code">code (symbols)</option><option value="digits">digits</option><option value="currency">currency</option><option value="arrows">arrows</option><option value="binary">binary</option><option value="blocks">blocks</option></select></div><div><label>Field glyphs in sequence</label><select name="glyphs"><option value="digits">numbers</option><option value="ascii">ascii charset</option></select></div></div>
+<div class="row"><div><label>Trace edges</label><select name="edges"><option value="1">yes</option><option value="0">no</option></select></div><div><label>Glyph colour</label><select name="flat"><option value="0">brightness ramp</option><option value="1">flat</option></select></div></div></div>
 <label>Output width <span class="val" id="widthv">source</span></label><input type="number" name="width" id="width" placeholder="source width" min="240" step="2">
 <div class="row"><div><label>Field columns <span class="val" id="colsv">72</span></label><input type="range" name="cols" id="cols" min="24" max="160" value="72"></div>
 <div><label>Block fill <span class="val" id="fillv">1</span></label><input type="range" name="fill" id="fill" min="0.5" max="1" step="0.02" value="1"></div></div>
@@ -87,9 +89,11 @@ def run_job(jid, fields, filename, data):
     src = d / "in" / safe; src.write_bytes(data)
     is_video = src.suffix.lower() in {".mp4", ".mov", ".webm", ".m4v"}
     cmd = [sys.executable, str(HERE / "resolve.py"), str(src), str(d / "out"), "--state", fields.get("state", "all")]
-    for k in ("cols", "fill", "levels", "fps", "reroll"):
+    for k in ("cols", "fill", "levels", "fps", "reroll", "charset", "glyphs"):
         if fields.get(k): cmd += [f"--{k}", fields[k]]
     if fields.get("width"): cmd += ["--width", fields["width"]]
+    if fields.get("edges") == "0": cmd += ["--no-edges"]
+    if fields.get("flat") == "1": cmd += ["--flat"]
     if fields.get("state") == "sequence":
         if is_video:
             for k in ("start", "end"):
@@ -101,7 +105,7 @@ def run_job(jid, fields, filename, data):
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         job["status"] = "error"; job["log"] = "Render failed:\n" + (p.stderr or p.stdout)[-2000:]; return
-    order = ["field", "dither", "clear", "resolve"]
+    order = ["field", "ascii", "dither", "clear", "resolve"]
     files = sorted((f.name for f in (d / "out").iterdir()), key=lambda n: next((i for i, s in enumerate(order) if f"-{s}." in n), 9))
     job["files"] = files; job["status"] = "done"; job["log"] = f"Done in {time.time() - job['started']:.0f}s. " + p.stdout.strip()
 

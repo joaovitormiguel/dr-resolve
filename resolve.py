@@ -5,6 +5,8 @@ States
   field   dim two-digit numbers whose brightness follows the source (data nobody can read)
   dither  one lime-ramp block per number cell, ordered-dithered; a shape emerges (partial legibility)
   clear   the source itself, graded dark (legibility = transparency)
+  ascii   character-art render: each cell picks a glyph by brightness from a charset,
+          strong edges become line glyphs that follow the contour (BUCK / Coinbase style)
 
 Modes
   --state field|dither|clear|all   render one state (or every state) for the whole input
@@ -90,6 +92,67 @@ class Field:
                 d.text((c * self.cw + (self.cw - self.gw) / 2, r * self.ch + self.ch * 0.12), f"{self.nums[r][c]:02d}", font=self.font, fill=col)
         return out
 
+
+# ---------- state: ascii (glyph chosen by brightness; edges become line glyphs) ----------
+CHARSETS = {
+    "digits":   "0123456789",
+    "code":     " .,:;-~=+*<>/\\|[]{}()#%&$@",
+    "currency": " .:-=$#%&@",
+    "arrows":   " .-<>^v=+",
+    "binary":   " .01",
+    "blocks":   " .:░▒▓█",
+}
+
+class Ascii:
+    """Field-compatible renderer: same grid, but glyphs come from a density-sorted charset."""
+    def __init__(self, field, charset="code", edges=True, fg="#CDFE7C", flat=False, seed=7):
+        self.f = field; self.edges = edges; self.flat = flat
+        chars = CHARSETS.get(charset, charset)
+        # sort the charset by real ink density in this font so brightness maps to visual weight
+        dens = []
+        for ch in chars:
+            im = Image.new("L", (int(field.cw * 2) + 8, int(field.ch * 2) + 8), 0)
+            ImageDraw.Draw(im).text((4, 4), ch, font=field.font, fill=255)
+            dens.append((np.asarray(im).mean(), ch))
+        dens.sort(); self.ramp = [c for _, c in dens]
+        self.lut = ramp_lut(fg); self.rng = random.Random(seed)
+        self.jitter = np.zeros((field.rows, field.cols), dtype=np.int8)
+    def reroll(self, rate):
+        m = np.random.default_rng(self.rng.randint(0, 1 << 30)).random(self.jitter.shape) < rate
+        self.jitter[m] = np.random.default_rng(self.rng.randint(0, 1 << 30)).integers(-1, 2, m.sum())
+    def render(self, frame, gain=1.0, gamma=1.1, edge_thr=0.35, floor=0.12):
+        f = self.f
+        lum = np.clip(luminance(frame, f.cols, f.rows, blur=0.3) ** gamma * gain, 0, 1)
+        n = len(self.ramp)
+        # remap so everything under the floor is empty and the ramp starts just above it
+        scaled = np.clip((lum - floor) / (1 - floor), 0, 1)
+        idx = np.clip((scaled * (n - 1)).round().astype(int) + self.jitter, 0, n - 1)
+        idx[lum < floor] = 0
+        # edge orientation on the cell grid: Sobel on a 2x finer luminance, pooled back
+        if self.edges:
+            fine = luminance(frame, f.cols * 2, f.rows * 2, blur=0.6)
+            gy, gx = np.gradient(fine)
+            mag = np.hypot(gx, gy); ang = np.arctan2(gy, gx)
+            mag = mag.reshape(f.rows, 2, f.cols, 2).mean(axis=(1, 3))
+            ang = ang.reshape(f.rows, 2, f.cols, 2).mean(axis=(1, 3))
+            strong = mag > edge_thr * mag.max() if mag.max() > 0 else np.zeros_like(mag, bool)
+            # gradient is perpendicular to the edge; pick the glyph that runs along the edge
+            deg = (np.degrees(ang) + 90) % 180
+            edge_glyph = np.where(deg < 22.5, "-", np.where(deg < 67.5, "/", np.where(deg < 112.5, "|", np.where(deg < 157.5, "\\", "-"))))
+        out = Image.new("RGB", (f.W, f.H), (0, 0, 0)); d = ImageDraw.Draw(out)
+        for r in range(f.rows):
+            for c in range(f.cols):
+                v = float(lum[r, c])
+                if self.edges and strong[r, c]:
+                    ch = edge_glyph[r, c]; v = max(v, 0.75)
+                else:
+                    ch = self.ramp[idx[r, c]]
+                if ch == " " or (v < floor and not (self.edges and strong[r, c])): continue
+                col = tuple(int(x) for x in self.lut[255 if self.flat else min(255, int(v * 255))])
+                gw = f.font.getlength(ch)
+                d.text((c * f.cw + (f.cw - gw) / 2, r * f.ch + f.ch * 0.12), ch, font=f.font, fill=col)
+        return out
+
 # ---------- state: dither (one block per number cell) ----------
 def state_dither(frame, field, lime, levels_n=4, gamma=1.2, fill=1.0, lut=None):
     """Ordered (Bayer 8x8) dither on the field's own grid: each number cell becomes one block."""
@@ -110,14 +173,15 @@ def reveal_mask(k, field):
     return (field.thr < k).astype(np.float32)[field.row_of_y[:, None], field.col_of_x[None, :]][..., None]
 
 # ---------- sequence: field -> dither -> clear ----------
-def sequence_frame(frame, t, field, W, H, lime, lut, levels_n=4, fill=1.0):
+def sequence_frame(frame, t, field, W, H, lime, lut, levels_n=4, fill=1.0, glyphs=None):
     """t in 0..1. 0-0.35 field brightens; 0.35-0.65 each cell's number lights up into its block; 0.65-1 blocks resolve to clear."""
+    src = glyphs or field
     if t < 0.35:
-        return field.render(frame, gain=0.35 + 0.65 * (t / 0.35))
+        return src.render(frame, gain=0.35 + 0.65 * (t / 0.35))
     dith = np.asarray(state_dither(frame, field, lime, levels_n, fill=fill, lut=lut), dtype=np.float32)
     if t < 0.65:
         k = (t - 0.35) / 0.30
-        fld = np.asarray(field.render(frame), dtype=np.float32); mask = reveal_mask(k, field)
+        fld = np.asarray(src.render(frame), dtype=np.float32); mask = reveal_mask(k, field)
         return Image.fromarray((fld * (1 - mask) + dith * mask).astype(np.uint8))
     k = (t - 0.65) / 0.35
     clr = np.asarray(state_clear(frame, W, H), dtype=np.float32); mask = reveal_mask(k, field)
@@ -137,7 +201,12 @@ def encode(frames_dir, fps, outp):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input"); ap.add_argument("outdir")
-    ap.add_argument("--state", default="all", choices=["field", "dither", "clear", "all", "sequence"])
+    ap.add_argument("--state", default="all", choices=["field", "dither", "clear", "ascii", "all", "sequence"])
+    ap.add_argument("--charset", default="code", help="ascii charset: " + ", ".join(CHARSETS) + ", or a custom string")
+    ap.add_argument("--no-edges", action="store_true", help="ascii: do not trace edges with line glyphs")
+    ap.add_argument("--flat", action="store_true", help="ascii: single colour glyphs instead of a brightness ramp")
+    ap.add_argument("--fg", default=None, help="ascii glyph colour (default: --lime)")
+    ap.add_argument("--glyphs", default="digits", choices=["digits", "ascii"], help="sequence: what the field phase renders")
     ap.add_argument("--width", type=int, default=None, help="output width (default: source)")
     ap.add_argument("--cols", type=int, default=72, help="numbers per row in the field state")
     ap.add_argument("--fill", type=float, default=1.0, help="how much of each cell a dither block fills (1 = solid, lower adds a gap)")
@@ -159,7 +228,9 @@ def main():
         im = Image.open(inp).convert("RGB")
         W = even(a.width or im.width); H = even(W * im.height / im.width)
         field = Field(W, H, a.cols, a.lime)
+        asc = Ascii(field, a.charset, not a.no_edges, a.fg or a.lime, a.flat)
         if a.state in ("field", "all"): field.render(im).save(out / f"{stem}-field.png")
+        if a.state in ("ascii", "all"): asc.render(im).save(out / f"{stem}-ascii.png")
         if a.state in ("dither", "all"): state_dither(im, field, a.lime, a.levels, fill=a.fill, lut=lut).save(out / f"{stem}-dither.png")
         if a.state in ("clear", "all"): state_clear(im, W, H).save(out / f"{stem}-clear.png")
         if a.state == "sequence":
@@ -167,8 +238,8 @@ def main():
             n = int(a.seconds * a.fps); hold = int(a.hold * a.fps)
             for i in range(n + hold):
                 t = min(1.0, i / max(n - 1, 1))
-                if i and t < 0.65: field.reroll(a.reroll)
-                sequence_frame(im, t, field, W, H, a.lime, lut, a.levels, a.fill).save(od / f"f{i + 1:05d}.png")
+                if i and t < 0.65: field.reroll(a.reroll); asc.reroll(a.reroll)
+                sequence_frame(im, t, field, W, H, a.lime, lut, a.levels, a.fill, asc if a.glyphs == "ascii" else None).save(od / f"f{i + 1:05d}.png")
             encode(od, a.fps, out / f"{stem}-resolve.mp4"); shutil.rmtree(tmp)
         print("wrote", *sorted(p.name for p in out.glob(f"{stem}-*")))
         return
@@ -176,7 +247,8 @@ def main():
     tmp = Path(tempfile.mkdtemp()); files = load_frames(inp, a.fps, tmp)
     first = Image.open(files[0]); W = even(a.width or first.width); H = even(W * first.height / first.width)
     field = Field(W, H, a.cols, a.lime)
-    states = ["field", "dither", "clear"] if a.state == "all" else [a.state]
+    asc = Ascii(field, a.charset, not a.no_edges, a.fg or a.lime, a.flat)
+    states = ["field", "ascii", "dither", "clear"] if a.state == "all" else [a.state]
     dirs = {s: (tmp / s) for s in states}
     for d in dirs.values(): d.mkdir()
     dur = len(files) / a.fps
@@ -184,14 +256,15 @@ def main():
     t1 = a.end if a.end is not None else dur
     for i, f in enumerate(files):
         im = Image.open(f).convert("RGB")
-        if i: field.reroll(a.reroll)
+        if i: field.reroll(a.reroll); asc.reroll(a.reroll)
         for s in states:
             if s == "field": o = field.render(im)
+            elif s == "ascii": o = asc.render(im)
             elif s == "dither": o = state_dither(im, field, a.lime, a.levels, fill=a.fill, lut=lut)
             elif s == "clear": o = state_clear(im, W, H)
             else:
                 t = 0.0 if i / a.fps <= t0 else min(1.0, (i / a.fps - t0) / max(t1 - t0, 1e-6))
-                o = sequence_frame(im, t, field, W, H, a.lime, lut, a.levels, a.fill)
+                o = sequence_frame(im, t, field, W, H, a.lime, lut, a.levels, a.fill, asc if a.glyphs == "ascii" else None)
             o.save(dirs[s] / f.name)
     for s, d in dirs.items():
         encode(d, a.fps, out / f"{stem}-{'resolve' if s == 'sequence' else s}.mp4")

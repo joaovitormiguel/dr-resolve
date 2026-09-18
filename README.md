@@ -9,6 +9,7 @@ The idea: under every drayage lane there is a layer of numbers nobody could read
 | `field` | Dim two-digit numbers in JetBrains Mono whose brightness follows the source. Data nobody can read. |
 | `dither` | One block per number cell, on the same grid as the field, ordered-dithered in the lime ramp. A shape emerges. Partial legibility. |
 | `clear` | The source itself, graded dark. Legibility. |
+| `ascii` | Character-art render: each cell picks a glyph by brightness from a charset (`code`, `digits`, `currency`, `arrows`, `binary`, `blocks`, or any string), strong edges become line glyphs that follow the contour. Dark areas stay empty. |
 | `sequence` | Animates field → dither → clear. Each number cell lights up into its block, then each block resolves to the picture, in Bayer order. It reads as data resolving, not a crossfade. |
 
 ## Install
@@ -39,7 +40,7 @@ python3 resolve.py clip.mp4 out/ --state sequence --start 1.5 --end 6
 python3 resolve.py photo.jpg out/ --state sequence --seconds 4 --hold 1
 ```
 
-Options: `--width` output width (source by default) · `--cols` numbers per row in the field (72) · `--fill` how much of each cell a dither block fills (1 = solid, default; lower adds a gap) · `--levels` tones in the dither (4) · `--fps` (24) · `--reroll` share of field cells that change each frame (0.05) · `--lime` accent hex (#CDFE7C).
+Options: `--charset` ascii charset (code) · `--no-edges` · `--flat` single-colour glyphs · `--fg` glyph colour · `--glyphs digits|ascii` what the sequence's field phase renders · `--width` output width (source by default) · `--cols` numbers per row in the field (72) · `--fill` how much of each cell a dither block fills (1 = solid, default; lower adds a gap) · `--levels` tones in the dither (4) · `--fps` (24) · `--reroll` share of field cells that change each frame (0.05) · `--lime` accent hex (#CDFE7C).
 
 ## Rules that make it look right
 
